@@ -1,0 +1,93 @@
+################################################################################
+##        Title : Expression profile of T-ALL human samples extracted from public databases. 
+##  Description : This script is to obtain the expression matrix of the primary T-ALL cohort GSE14618 used in Garcia-Hernanez V manuscript
+##         Date : 06th January 2022
+################################################################################
+
+################################################################################
+## 1. Set up paths
+################################################################################
+
+.wd <- getwd()
+
+################################################################################
+## 2. Load packages
+################################################################################
+
+
+library(biomaRt)
+library(Biobase)
+library(affy)
+library(ggrepel)
+library(dplyr)
+library(data.table)
+library(GEOquery)
+library(hgu133plus2.db)
+library(hthgu133pluspmcdf)
+library(hthgu133pluspmprobe)
+library(genefilter)
+library(sva)
+
+################################################################################
+## 3. Generate expression matrix
+################################################################################
+
+ 
+##### GSE14618 ####
+#### Dataset info:
+## This SuperSeries is composed of the following SubSeries:
+## GSE14613	Microarray analyses COG study 8707. Platform GPL96	[HG-U133A] Affymetrix Human Genome U133A Array. Subset with no survival info.
+## GSE14615	Microarray analyses COG study 9404. Platform GPL570	[HG-U133_Plus_2] Affymetrix Human Genome U133 Plus 2.0 Array. Subset with survival info for 40 patients (Discovery cohort)
+####
+
+# Get phenotype data
+GSE14618 <- getGEO("GSE14618", GSEMatrix = TRUE)
+show(GSE14618)
+pheno_GSE14618_gpl570<-GSE14618$`GSE14618-GPL570_series_matrix.txt.gz`@phenoData@data  ##metadata for COG8707
+pheno_GSE14618_gpl96<-GSE14618$`GSE14618-GPL96_series_matrix.txt.gz`@phenoData@data  ##metadata for COG9404
+
+
+# Download raw data CEL files for each project
+GSE14618_raw = getGEOSuppFiles("GSE14618")
+GSE14618_raw
+
+# Divide manually in set 1 (COG8707)  and set 2 (COG9404) within raw directory
+## normalize CEL files (method old 3' microarrays) and output data
+GSE14618_affy_1<-ReadAffy(celfile.path = "GSE14618/GSE14618_RAW/set1/")
+esetGSE14618_1 <- affy::rma(GSE14618_affy_1)
+
+GSE14618_affy_2<-ReadAffy(celfile.path = "GSE14618/GSE14618_RAW/set2/")
+esetGSE14618_2 <- affy::rma(GSE14618_affy_2)
+
+# Generation of expression matrix
+write.exprs(esetGSE14618_1,file="GSE62156/rma_GSE62156_1.txt")
+exp_GSE14618_1<-data.frame(affy::exprs(esetGSE14618_1))
+colnames(exp_GSE14618_1)<-gsub('\\..*','',colnames(exp_GSE14618_1))
+
+write.exprs(esetGSE14618_2,file="GSE62156/rma_GSE62156_2.txt")
+exp_GSE14618_2<-data.frame(affy::exprs(esetGSE14618_2))
+colnames(exp_GSE14618_2)<-gsub('\\..*','',colnames(exp_GSE14618_2))
+
+# Merge pheno data and expression
+row.names(pheno_GSE14618_gpl96)  ## Check the number of patients and positions of patients IDs (row names in pheno_GSE... and column names in exp_GSE...) 
+colnames(exp_GSE14618_1)
+
+row.names(pheno_GSE14618_gpl570)  ## Check the number of patients and positions of patients IDs (row names in pheno_GSE... and column names in exp_GSE...) 
+colnames(exp_GSE14618_2)
+
+# ANNOTATE GENES
+## set 2 (COG9404)
+hgu133plus2()
+Annot <- toTable(hgu133plus2SYMBOL)
+colnames(Annot)
+row.names(Annot)<-Annot$probe_id
+expannot_GSE14618_2<-merge(Annot,exp_GSE14618_2,by.x=0,by.y=0,all.y=T) #expression matrix for COG9404
+
+## set 1 (COG8707) from downloaded annotation GEO GPL96
+GPL96<-read.delim("../GPL96-57554.txt")
+Annot <- subset(GPL96,select=c("ID","Gene.Symbol"))
+colnames(Annot)<-c("probe_id","symbol")
+row.names(Annot)<-Annot$probe_id
+expannot_GSE14618_1<-merge(Annot,exp_GSE14618_1,by.x=0,by.y=0,all.y=T) #expression matrix for COG8707
+
+
