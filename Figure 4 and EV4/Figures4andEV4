@@ -1,0 +1,419 @@
+################################################################################
+##        Title : Exploration of b-Catenin gene signature expression  T-ALL human samples extracted from public databases. 
+##  Description : This script is to obtain Figure 4 and related EV4 panels (c, d, e) in Garcia-Hernandez V manuscript
+##         Date : 07th October 2022
+################################################################################
+
+################################################################################
+## 1. Set up paths
+################################################################################
+
+.wd <- getwd()
+
+################################################################################
+## 2. Load packages
+################################################################################
+library(ggplot2)
+library(survminer)
+
+################################################################################
+## 3. Files and objects needed
+################################################################################
+
+## Output from ssGSEA analysis performed in Gene Pattern
+### GSE14618 (discovery cohort): ssgsea_discovery_cohort.PROJ_import.gct
+### GSE14618 (subset without survival data): ssgsea_gse14618_non_surv.PROJ_import.gct
+### EGA and TARGET cohorts: ssgsea_TARGET_EGA.PROJ_import.gct
+
+## pheno object from 'Figure 3.R' script
+## pheno_GSE14618_gpl96 object from 'Cohorts_expression_matrix.R' script.
+## metadata for EGA and TARGET cohorts (only accesible upon request to NIH repository)
+
+################################################################################
+## 4. Fig 4a: ssGSEA scores from GSE14618 (discovery cohort)
+################################################################################
+
+# Load ssGSEA output ####
+ssbcat_micro_surv<-read.delim("ssgsea_discovery_cohort.PROJ_import.gct")
+
+ssbcat_micro_surv<-as.data.frame(t(ssbcat_micro_surv))
+colnames(ssbcat_micro_surv)<-ssbcat_micro_surv[1,]
+ssbcat_micro_surv<-ssbcat_micro_surv[-c(1,2),]
+
+# Merge ssGSEA output with metadata ####
+metadata_ssbcat_micro_surv<-merge(ssbcat_micro_surv,pheno,by="row.names")
+row.names(metadata_ssbcat_micro_surv)<-metadata_ssbcat_micro_surv$Row.names
+metadata_ssbcat_micro_surv$Row.names<-NULL
+metadata_ssbcat_micro_surv$First_event<-gsub(' \\(.*','',metadata_ssbcat_micro_surv$description)
+metadata_ssbcat_micro_surv$bcat_exp<-as.numeric(metadata_ssbcat_micro_surv$bcat_exp_prob1)
+
+metadata_ssbcat_micro_surv$cluster1<-as.numeric(metadata_ssbcat_micro_surv$cluster1)
+metadata_ssbcat_micro_surv$cluster2<-as.numeric(metadata_ssbcat_micro_surv$cluster2)
+metadata_ssbcat_micro_surv$cluster3<-as.numeric(metadata_ssbcat_micro_surv$cluster3)
+
+# G1 ssGSEA scores quartiles ####
+summary(metadata_ssbcat_micro_surv$cluster1)
+boxplot(metadata_ssbcat_micro_surv$cluster1)
+quantile(metadata_ssbcat_micro_surv$cluster1)
+quantile(metadata_ssbcat_micro_surv$cluster2)
+
+boxplot<-boxplot(metadata_ssbcat_micro_surv$cluster1)  #to search for outliers
+boxplot$out  #to eliminate outliers
+#metadata_ssbcat_micro_surv<-metadata_ssbcat_micro_surv[!(metadata_ssbcat_micro_surv$cluster1 %in% boxplot$out),] #run if outliers removal is needed
+#boxplot(metadata_ssbcat_micro_surv$cluster1)
+#quantile(metadata_ssbcat_micro_surv$cluster1)
+
+
+# Graph:  Correlation of ssGSEA enrichment for G1 and G2 modules ####
+ggplot(metadata_ssbcat_micro_surv,aes(x=cluster1,y=cluster2))+
+  geom_point(aes(color=First_event),size=4.5)+
+  scale_color_manual(values=c("green2","darkolivegreen","#F8766D"))+
+  geom_vline(xintercept = Q1value ,linetype="dashed")+ #replace by numeric value corresponding to Q1(25%)
+  geom_vline(xintercept = Q4value,linetype="dashed")+  #replace by numeric value corresponding to Q4(75%)
+  theme_bw()+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=8),
+        text = element_text(size=10),
+        axis.title.x = element_text(size=16),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=1)+
+  stat_cor(method="pearson")
+
+
+################################################################################
+## 5. Fig EV4d: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4a) from discovery cohort
+################################################################################
+# Divide dataframe based on quartiles from Fig 4a ####
+clust1_clas<-rbind(data.frame(cluster1_lev="Q4",metadata_ssbcat_micro_surv[metadata_ssbcat_micro_surv$cluster1>Q4value,]),
+                   data.frame(cluster1_lev="Q1",metadata_ssbcat_micro_surv[metadata_ssbcat_micro_surv$cluster1<Q1value,]),
+                   data.frame(cluster1_lev="Q2-Q3",metadata_ssbcat_micro_surv[metadata_ssbcat_micro_surv$cluster1<Q4value & metadata_ssbcat_micro_surv$cluster1>Q1value,]))
+
+#to generate clust1_clas object: replace by numeric values corresponding to Q1(25%) and Q4(75%)
+
+# Define factor levels ####
+clust1_clas<-clust1_clas %>% mutate(disease_free =  ifelse(First_event == "C= Complete Continous Remission", 0, 1))
+clust1_clas$disease_free<-as.factor(clust1_clas$disease_free)
+dim(clust1_clas)
+
+clust1_clas$disease_free<-as.integer(clust1_clas$disease_free)
+clust1_clas$Alive_status<-as.integer(clust1_clas$Alive_status)
+
+clust1_clas<-clust1_clas %>% mutate(newcluster =  ifelse(cluster1_lev == "Q4", 0, 1)) # 0 = Q4 and 1 = not Q4
+clust1_clas$newcluster<-as.factor(clust1_clas$newcluster)
+dim(clust1_clas)
+
+# DFS (disease free survival) ####
+surv_C_fit_TALL <- survfit(Surv(EFS_yrs, Event) ~ newcluster, data=clust1_clas)
+ggsurvplot(surv_C_fit_TALL, pval = TRUE,
+           font.x = c(20),
+           font.y = c(20))
+palette = c("green", "indianred","lightseagreen","purple")
+
+# OS (overall survival) ####
+surv_C_fit_TALL <- survfit(Surv(Surv_yrs, Alive_status) ~ newcluster, data=clust1_clas)
+ggsurvplot(surv_C_fit_TALL, pval = TRUE,
+           font.x = c(20),
+           font.y = c(20))
+palette = c("green", "indianred","lightseagreen","purple")
+
+
+
+################################################################################
+## 6. Fig 4b: ssGSEA scores from GSE14618 (subset without survival data)
+################################################################################
+
+# Load ssGSEA output ####
+ssbcat_micro<-read.delim("ssgsea_gse14618_non_surv.PROJ_import.gct")
+
+ssbcat_micro<-as.data.frame(t(ssbcat_micro))
+colnames(ssbcat_micro)<-ssbcat_micro[1,]
+ssbcat_micro<-ssbcat_micro[-c(1,2),]
+
+# Merge ssGSEA output with metadata ####
+## Define geneset for exploration
+bcat_sig1<-filter(expannot_GSE14618_1, grepl(paste0('^',bcat_pattern,'\\>','$',collapse = '|'),symbol))
+bcat_sig2<-filter(expannot_GSE14618_1, grepl(paste0(setdiff(bcat_pattern,bcat_sig1$symbol),' ',collapse = '|'),symbol))
+bcat_sig3<-filter(expannot_GSE14618_1, grepl(paste0(' ',setdiff(bcat_pattern,bcat_sig1$symbol),collapse = '|'),symbol))
+
+bat_sig<-rbind(bcat_sig1,bcat_sig2)
+bcat_sig<-rbind(bcat_sig,bcat_sig3)
+
+bcat_sig$Row.names<-NULL
+bcat_sig$probe_id<-NULL
+
+bcat_sig<-bcat_sig[order(bcat_sig$GSM365046,decreasing = TRUE),]
+bcat_sig<-bcat_sig[!duplicated(bcat_sig$symbol),]
+
+row.names(bcat_sig)<-bcat_sig$symbol
+bcat_sig$symbol<-NULL
+
+
+ctnnb1_exp<-grepl('CTNNB1',expannot_GSE14618_1$symbol)
+kaiso_exp<-grepl('ZBTB33',expannot_GSE14618_1$symbol)
+brca1_exp<-grepl('BRCA1',expannot_GSE14618_1$symbol)
+#tcf_exp<-grepl('TCF7',expannot_GSE14618_1$symbol)
+#lef_exp<-grepl('LEF1',expannot_GSE14618_1$symbol)
+
+df1<-expannot_GSE14618_1[ctnnb1_exp,]
+df2<-expannot_GSE14618_1[kaiso_exp,]
+df3<-expannot_GSE14618_1[brca1_exp,]
+#df4<-expannot_GSE14618_1[tcf_exp,][c(1:2),]
+#df5<-expannot_GSE14618_1[lef_exp,]
+
+df_1<-as.data.frame(t(Reduce(function(x, y) merge(x, y, all=TRUE), list(df1, df2, df3))))
+#df_1<-as.data.frame(t(Reduce (function(x, y) merge(x, y, all=TRUE), list(df1, df2, df3, df4, df5))))
+df_1<-df_1[-c(1:2),]
+colnames(df_1)<-df_1[1,]
+df_1<-df_1[-1,]
+colnames(df_1)<-c("bcat_exp","brca1_exp_prob1","brca1_exp_prob2","kaiso_exp") 
+
+## Merge with metadata
+metadata_ssbcat_micro<-merge(ssbcat_micro,data.frame(row.names=row.names(pheno_GSE14618_gpl96),
+                                                     First_event=gsub(' \\(.*','',pheno_GSE14618_gpl96$description),
+                                                     bcat_exp=as.numeric(df_1$bcat_exp)),by=0,all.y=TRUE) ##expression matrix of bcat signature (79 bonafide genes)
+                                                                                                          ##code to generate as df for COG9404 in 'Figure 3.R' and 'Figure EV3.R' scripts.
+
+row.names(metadata_ssbcat_micro)<-metadata_ssbcat_micro$Row.names
+
+metadata_ssbcat_micro$cluster1<-as.numeric(metadata_ssbcat_micro$cluster1)
+metadata_ssbcat_micro$cluster2<-as.numeric(metadata_ssbcat_micro$cluster2)
+metadata_ssbcat_micro$cluster3<-as.numeric(metadata_ssbcat_micro$cluster3)
+
+# G1 sssGSEA score quartiles ####
+summary(metadata_ssbcat_micro$cluster1)
+boxplot(metadata_ssbcat_micro$cluster1)
+quantile(metadata_ssbcat_micro$cluster1)
+quantile(metadata_ssbcat_micro$cluster2)
+
+boxplot<-boxplot(metadata_ssbcat_micro$cluster1)  #to search for outliers
+boxplot$out  #to eliminate outliers
+#metadata_ssbcat_micro<-metadata_ssbcat_micro[!(metadata_ssbcat_micro$cluster1 %in% boxplot$out),]  #run if outliers removal is needed
+#boxplot(metadata_ssbcat_micro$cluster1)
+#quantile(metadata_ssbcat_micro$cluster1)
+
+# Graph:  Correlation of ssGSEA enrichment for G1 and G2 modules ####
+ggplot(metadata_ssbcat_micro,aes(x=cluster1,y=cluster2))+
+  geom_point(aes(color=First_event),size=7)+
+  scale_color_manual(values=c("green2","darkolivegreen","#F8766D"))+
+  geom_vline(xintercept = Q1value ,linetype="dashed")+ #replace by numeric value corresponding to Q1(25%)
+  geom_vline(xintercept = Q4value,linetype="dashed")+  #replace by numeric value corresponding to Q4(75%)
+  theme_bw()+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=8),
+        text = element_text(size=10),
+        axis.title.x = element_text(size=16),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=.6)+
+  stat_cor(method="pearson")
+
+################################################################################
+## 7. Fig EV4c (left): b-catenin expression levels per outcome or cluster from Fig 4b
+################################################################################
+
+# Divide dataframe based on quartiles from Fig 4b ####
+clust1_clas<-rbind(data.frame(cluster1_lev="Q4",metadata_ssbcat_micro[metadata_ssbcat_micro$cluster1>Q4value,]),
+                   data.frame(cluster1_lev="Q1",metadata_ssbcat_micro[metadata_ssbcat_micro$cluster1<Q1value,]),
+                   data.frame(cluster1_lev="Q2-Q3",metadata_ssbcat_micro[metadata_ssbcat_micro$cluster1<Q4value & metadata_ssbcat_micro_surv$cluster1>Q1value,]))
+
+#to generate clust1_clas object: replace by numeric values corresponding to Q1(25%) and Q4(75%)
+
+
+# box-plot of b-catenin expressions per cluster ####
+my_comparison_clusters<-list(c("Q4","Q1"),c("Q4","Q2-Q3"),c("Q1","Q2-Q3"))
+
+ggplot(clust1_clas,aes(x=reorder(as.factor(cluster1_lev),clust1_clas$bcat_exp, FUN=median),y=bcat_exp))+
+  geom_jitter(aes(color=First_event),size=7)+
+  geom_boxplot(alpha=0.1)+
+  scale_color_manual(values=c("green","darkolivegreen","coral"))+
+  theme_bw()+
+  #stat_compare_means(method="wilcox.test",comparisons = my_comparison_clusters)+ # Add pairwise comparison p-value
+  stat_compare_means(method="kruskal.test")+ 
+  theme(legend.position="bottom",
+        legend.text = element_text(size=9),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=16,hjust=1),
+        axis.text.y = element_blank(),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=1)
+
+# box-plot of b-catenin expressions per outcome ####
+ggplot(prop_clust,aes(x=group,y=Proportion,fill=First_event))+
+  geom_col(color="black")+
+  scale_fill_manual(values=c("dodgerblue","green","darkolivegreen","cyan"))+
+  theme_bw()+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=14),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=16,hjust=1),
+        axis.text.y = element_blank(),
+        axis.title.y = element_text(size=16))
+
+
+
+
+################################################################################
+## 8. Fig 4c and 4d: ssGSEA scores from EGA and TARGET cohorts
+################################################################################
+
+# Load ssGSEA output ####
+ssbcat<-read.delim("ssgsea_TARGET_EGA.PROJ_import.gct")
+
+ssbcat<-as.data.frame(t(ssbcat))
+colnames(ssbcat)<-ssbcat[1,]
+ssbcat<-ssbcat[-c(1,2),]
+
+# Merge ssGSEA output with metadata ####
+metadata_ssbcat<-merge(ssbcat,metadata,by=0,all.y=TRUE)
+row.names(metadata_ssbcat)<-metadata_ssbcat$Row.names
+metadata_ssbcat$Row.names<-NULL
+
+metadata_ssbcat<-merge(metadata_ssbcat,bcat_lev,by=0)
+
+metadata_ssbcat$cluster1<-as.numeric(metadata_ssbcat$cluster1)
+metadata_ssbcat$cluster2<-as.numeric(metadata_ssbcat$cluster2)
+metadata_ssbcat$cluster3<-as.numeric(metadata_ssbcat$cluster3)
+
+# Cohort selection (EGA or TARGET) ####
+cohorts<-c("TARGET","EGA_R","EGA_TLE")
+cohorts<-c("TARGET")
+cohorts<-c("EGA_R","EGA_TLE")
+
+# Ignore patients with unclear outcome ####
+metadata_ssbcat<-subset(metadata_ssbcat,(metadata_ssbcat$First_event!="Second Malignant Neoplasm" & 
+                                           metadata_ssbcat$First_event!="Secondary leukemia" &
+                                           metadata_ssbcat$First_event!="Disease"))
+
+# G1 sssGSEA score quartiles ####
+summary(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster1)
+boxplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster1)
+
+summary(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster2)
+boxplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster2)
+
+
+boxplot<-boxplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster1) #to search for outliers
+boxplot$out  #to eliminate outliers
+#metadata_ssbcat<-metadata_ssbcat[!(metadata_ssbcat$cluster1 %in% boxplot$out),]  #run if outliers removal is needed
+#boxplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster1)
+#summary(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ]$cluster1)
+
+# Correlation of ssGSEA enrichment for G1 and G2 modules ####
+ggplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ],aes(x=cluster1,y=cluster2))+
+  geom_point(data=metadata_ssbcat[metadata_ssbcat$First_event!="NA" & metadata_ssbcat$First_event!="Censored" & metadata_ssbcat$GSEA %in% cohorts,],aes(color=First_event),size=5)+
+  scale_color_manual(values=c("grey","#F8766D","darkolivegreen","green2"))+  # EGA color pattern
+  #scale_color_manual(values=c("grey","lightblue","darkolivegreen","green2"))+ #TARGET color pattern
+  geom_vline(xintercept = Q1value,linetype="dashed")+  #replace by numeric value corresponding to Q1(25%)
+  geom_vline(xintercept = Q4value,linetype="dashed")+  #replace by numeric value corresponding to Q4(75%)
+  theme_bw()+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=12),
+        text = element_text(size=12),
+        axis.title.x = element_text(size=16),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=0.8)+
+  stat_cor(method="pearson")
+
+
+################################################################################
+## 9. Fig EV4c (EGA, middle; TARGET, right) : b-catenin expression levels per outcome or cluster from Fig 4b
+################################################################################
+
+# Divide dataframe based on quartiles from Fig 4b ####
+clust1_clas<-rbind(data.frame(cluster1_lev="Q4",metadata_ssbcat[metadata_ssbcat$cluster1>Q4value,]),
+                   data.frame(cluster1_lev="Q1",metadata_ssbcat[metadata_ssbcat$cluster1<Q1value,]),
+                   data.frame(cluster1_lev="Q2-Q3",metadata_ssbcat[metadata_ssbcat$cluster1<Q4value & metadata_ssbcat$cluster1>Q1value,]))
+#to generate clust1_clas object: replace by numeric values corresponding to Q1(25%) and Q4(75%)
+
+
+# box-plot of b-catenin expressions per cluster ####
+## remember run lines 238-241 to select cohort (either EGA or TARGET) 
+ggplot(clust1_clas[clust1_clas$GSEA %in% cohorts, ],aes(x=cluster1_lev,y=bcat_exp_EGA))+
+  geom_jitter(data=clust1_clas[!is.na(clust1_clas$First_event) & clust1_clas$First_event!="Censored" & clust1_clas$GSEA %in% cohorts,],aes(color=First_event),size=5)+
+  geom_boxplot(data=clust1_clas[!is.na(clust1_clas$First_event) & clust1_clas$First_event!="Censored" & clust1_clas$GSEA %in% cohorts,],alpha=0.1)+
+  #scale_color_manual(values=c("grey","lightblue","darkolivegreen","green2"))+ #TARGET color pattern
+  scale_color_manual(values=c("grey","#F8766D","darkolivegreen","green2"))+  #EGA color pattern
+  theme_bw()+
+  #stat_compare_means(method="wilcox.test",comparisons = my_comparison_clusters)+ # Add pairwise comparison p-value
+  stat_compare_means(method="kruskal.test")+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=9),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=16,hjust=1),
+        axis.text.y = element_blank(),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=0.025)
+
+# box-plot of b-catenin expressions per outcome ####
+ggplot(clust1_clas[clust1_clas$GSEA %in% cohorts, ],aes(x=First_event,y=bcat_exp_EGA))+
+  geom_jitter(data=clust1_clas[!is.na(clust1_clas$First_event) & clust1_clas$First_event!="Censored" & clust1_clas$GSEA %in% cohorts,],aes(color=First_event),size=5)+
+  geom_boxplot(data=clust1_clas[!is.na(clust1_clas$First_event) & clust1_clas$First_event!="Censored" & clust1_clas$GSEA %in% cohorts,],alpha=0.1)+
+  scale_color_manual(values=c("grey","lightblue","darkolivegreen","green2"))+ #TARGET color pattern
+  #scale_color_manual(values=c("grey","#F8766D","darkolivegreen","green2"))+  #EGA color pattern
+  theme_bw()+
+  #stat_compare_means(method="wilcox.test",comparisons = my_comparison_clusters)+ # Add pairwise comparison p-value
+  stat_compare_means(method="kruskal.test")+
+  theme(legend.position="bottom",
+        legend.text = element_text(size=9),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=16,hjust=1),
+        axis.text.y = element_blank(),
+        axis.title.y = element_text(size=16))+
+  coord_fixed(ratio=0.025)
+
+################################################################################
+## 10. Fig EV4e: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4d) from TARGET cohort 
+################################################################################
+
+# Divide dataframe based on quartiles from Fig 4b ####
+clust1_clas<-rbind(data.frame(cluster1_lev="Q4",metadata_ssbcat[metadata_ssbcat$cluster1>Q4value,]),
+                   data.frame(cluster1_lev="Q1",metadata_ssbcat[metadata_ssbcat$cluster1<Q1value,]),
+                   data.frame(cluster1_lev="Q2-Q3",metadata_ssbcat[metadata_ssbcat$cluster1<Q4value & metadata_ssbcat$cluster1>Q1value,]))
+#to generate clust1_clas object: replace by numeric values corresponding to Q1(25%) and Q4(75%)
+
+# Define factor levels ####
+clust1_clas_target<-clust1_clas[clust1_clas$GSEA %in% cohorts,]
+row.names(clust1_clas_target)<-clust1_clas_target$Row.names
+clust1_clas_target$Row.names<-NULL
+clust1_clas_target<-merge(clust1_clas_target,metadata_target,by="row.names")
+row.names(clust1_clas_target)<-clust1_clas_target$Row.names
+clust1_clas_target$Row.names<-NULL
+
+clust1_clas_target<-subset(clust1_clas_target,(clust1_clas_target$First_event!="Censored"))
+
+
+clust1_clas_target<-clust1_clas_target %>% mutate(disease_free =  ifelse(First_event == "Remission", 0, 1))
+clust1_clas_target$disease_free<-as.factor(clust1_clas_target$disease_free)
+dim(clust1_clas_target)
+
+clust1_clas_target$disease_free<-as.integer(clust1_clas_target$disease_free)
+
+clust1_clas_target<-clust1_clas_target %>% mutate(Alive_status =  ifelse(Vital_status == "Alive", 0, 1))
+clust1_clas_target$Alive_status<-as.factor(clust1_clas_target$Alive_status)
+dim(clust1_clas_target)
+
+clust1_clas_target$Alive_status<-as.integer(clust1_clas_target$Alive_status)
+
+clust1_clas_target<-clust1_clas_target %>% mutate(newcluster =  ifelse(cluster1_lev == "Q4", 0, 1))
+clust1_clas_target$newcluster<-as.factor(clust1_clas_target$newcluster)
+dim(clust1_clas_target)
+
+# DFS (disease free survival) ####
+surv_C_fit_TALL <- survfit(Surv(Event_free_surv_days/365, disease_free) ~ newcluster, data=clust1_clas_target[clust1_clas_target$First_event!="Second Malignant Neoplasm",])
+
+ggsurvplot(surv_C_fit_TALL, pval = TRUE,
+           font.x = c(20),
+           font.y = c(20))
+palette = c("green", "indianred","lightseagreen","purple")
+
+pairwise_survdiff(Surv(Event_free_surv_days, disease_free) ~ cluster, data=data_boot_cluster)
+
+
+# OS (overall survival) ####
+surv_C_fit_TALL <- survfit(Surv(Overall_survival_time_days/365, Alive_status) ~ newcluster, data=clust1_clas_target)
+
+ggsurvplot(surv_C_fit_TALL, pval = TRUE,
+           font.x = c(20),
+           font.y = c(20))
+palette = c("green", "indianred","lightseagreen","purple")
+
+
