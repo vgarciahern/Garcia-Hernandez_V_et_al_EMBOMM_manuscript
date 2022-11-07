@@ -1,0 +1,327 @@
+################################################################################
+##        Title : TALL - Bcatenin activity program - EMBOMM
+##  Description : This script is for comparing bcat ChIP regions (Dataset_EV1_EMM)
+##                vs those published in Sanda et al Cancer Cell, 2012 - Table S2 
+##                and NOTCH1 data from ChIP-ATLAS
+##         Date : 23rd Oct 2022
+################################################################################
+
+################################################################################
+## 0. Remarks about required input data from public resources
+################################################################################
+
+# REMARK 1: 
+# NOTCH1 bed file from ChIP-ATLAS (all cell lines) obtained from:
+
+# https://chip-atlas.org/peak_browser
+# Experiment Type: (ChIP:Histone); Cell type Class (Blood); Threshold for Significance (50)
+# ChIP Antigen: (NOTCH1) [Cell Type (All)]
+
+# Then filtered for HBP-ALL and CUTLL1 cell lines with 'grep'
+
+#grep "HPB-ALL" Oth.Bld.50.NOTCH1.AllCell.bed > ChIP_ATLAS_NOTCH1_HPB_ALL.bed
+#grep "CUTLL1" Oth.Bld.50.NOTCH1.AllCell.bed > ChIP_ATLAS_NOTCH1_CUTLL1.bed
+
+# REMARK 2:  
+# UCSC chain file downloaded from https://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/
+
+# REMARK 3:
+# Download results from Sanda et al Cancer Cell 2012  https://pubmed.ncbi.nlm.nih.gov/22897851/
+# (Table S2 related to Figure2)
+
+# REMARK 4:
+# Hg38 chrom sizes to be downloaded from https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.chrom.sizes
+
+# REMARK 5:
+# Open regulatory Annotations downloaded from http://www.oreganno.org/dump/
+# Regions merged with 'bedtools merge -d 1000'
+
+# Set up paths ------------------------------------------------------------
+
+################################################################################
+## 1. (Optional) Set up paths
+################################################################################
+
+
+# Load packages -----------------------------------------------------------
+
+################################################################################
+## 2. Load packages
+################################################################################
+
+require(ChIPseeker)
+require(dplyr)
+require(openxlsx)
+require(rtracklayer)  # Required for liftOver from hg18 (Sanda) to hg38 (bcat)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# Import data -------------------------------------------------------------
+
+################################################################################
+## 3. Import regions of interest: Bcat, Sanda et al. and ChIP-ATLAS regions
+################################################################################
+
+# Bcat ChIPseq results: 522 unique regions
+chip.genes <- read.xlsx(xlsxFile = "Dataset_EV1_EMM.xlsx", sheet = 2)
+  # Select only the columns with the regions
+bcat.chip.unique.regions <- chip.genes[,c("Chromosome", "Start", "End")]
+bcat.chip.unique.regions <- unique(bcat.chip.unique.regions)
+
+# Results from Sanda et al  (Table S2 related to Figure2)
+sanda <- read.xlsx(xlsxFile = "Sanda_etal_TALL_TFs_TableS2.xlsx",
+                   sheet = "Jurkat",startRow = 3)
+colnames(sanda) <- c("Group", "CHROM", "START", "END", "LENGTH", "TAL1", "HEB", "E2A", "LMO1", "GATA3", "RUNX1")
+
+
+sanda$CHROM <- paste("chr", sanda$CHROM,sep="")  # To properly carry out the lift over
+
+# Import NOTCH1 data from ChIP-ATLAS
+ # Cell line HPB-ALL
+NOTCH1.HPB <- read.table(file = "ChIP_overlapping_enrichment/ChIP_ATLAS_NOTCH1_HPB_ALL.bed",
+                            sep = "\t",header = FALSE)
+NOTCH1.HPB <- NOTCH1.HPB[,-c(7,8,9)] # These are for plotting in IGV
+colnames(NOTCH1.HPB) <- c("seqnames", "start", "end", "description", "score", "strand")
+  
+ # Cell line CUTLL1
+NOTCH1.CUTLL1 <- read.table(file = "ChIP_overlapping_enrichment/ChIP_ATLAS_NOTCH1_CUTLL1.bed",
+                         sep = "\t",header = FALSE)
+NOTCH1.CUTLL1 <- NOTCH1.CUTLL1[,-c(7,8,9)] # These are for plotting in IGV
+colnames(NOTCH1.CUTLL1) <- c("seqnames", "start", "end", "description", "score", "strand")
+
+
+################################################################################
+## 3. STEP 0: Annotate peaks in bcat
+################################################################################
+
+# Create the GRanges object
+chips.genes.gr <- makeGRangesFromDataFrame(df = bcat.chip.unique.regions,
+                                     keep.extra.columns=TRUE,
+                                     seqnames.field="Chromosome",
+                                     start.field="Start",
+                                     end.field="End",
+                                     ignore.strand=TRUE,
+                                     starts.in.df.are.0based=TRUE)  
+
+chips.genes.Anno <- annotatePeak(peak = chips.genes.gr,
+                                 tssRegion = c(-3000,3000),
+                                 TxDb = txdb,
+                                 annoDb = "org.Hs.eg.db")
+
+chips.genes.Anno <- as.data.frame(chips.genes.Anno)
+chips.genes.Anno <- chips.genes.Anno[,-which(colnames(chips.genes.Anno) %in% "strand")]
+
+#  Create GRanges object -> now they are on 1-based coordinates
+chips.genes.gr <- makeGRangesFromDataFrame(df = chips.genes.Anno,
+                                           keep.extra.columns=TRUE,
+                                           seqnames.field="seqnames",
+                                           start.field="start",
+                                           end.field="end",
+                                           ignore.strand=TRUE,
+                                           starts.in.df.are.0based=FALSE)  
+
+################################################################################
+## 4. STEP 1: Lift over Sanda's data: from hg18 to hg38
+################################################################################
+
+# UCSC chain file to liftover
+chain <- import.chain("other/hg18ToHg38.over.chain")
+
+sanda.gr <- makeGRangesFromDataFrame(df = sanda,
+                                           keep.extra.columns=TRUE,
+                                           seqnames.field="CHROM",
+                                           start.field="START",
+                                           end.field="END",
+                                           ignore.strand = TRUE,
+                                           starts.in.df.are.0based=TRUE) 
+
+sanda.gr.hg38 <- liftOver(sanda.gr, chain)
+sanda.gr.hg38.df <- as.data.frame(sanda.gr.hg38)
+
+# REMARK: This new coordinates (start) are NOT 0-based anymore, they are 1-based!
+
+################################################################################
+## 5. STEP 2: Create a list of GRanges objects, each corresponding to one TF.
+## Add NOTCH1 data also
+################################################################################
+
+# Create GRanges objects from the different TFs from Sanda
+TF <- c("TAL1", "HEB", "E2A", "LMO1", "GATA3", "RUNX1")
+TFs.dbs <- vector("list", length=length(TF))
+names(TFs.dbs) <- TF
+
+for(i in 1:length(TF))
+{
+  tf.interest <- which(colnames(sanda.gr.hg38.df) %in% TF[i])
+  data <- sanda.gr.hg38.df[sanda.gr.hg38.df[,tf.interest] == 1,]
+  
+  # Create GRanges
+  TFs.dbs[[i]] <- makeGRangesFromDataFrame(df = data,
+                                       keep.extra.columns=TRUE,
+                                       seqnames.field="seqnames",
+                                       start.field="start",
+                                       end.field="end",
+                                       strand.field = "strand",
+                                       starts.in.df.are.0based=FALSE) 
+}
+
+# Add NOTCH1 info
+TFs.dbs[["NOTCH1.HPB"]] <- makeGRangesFromDataFrame(df = NOTCH1.HPB,
+                                                    keep.extra.columns=TRUE,
+                                                    seqnames.field="seqnames",
+                                                    start.field="start",
+                                                    end.field="end",
+                                                    strand.field = "strand",
+                                                    starts.in.df.are.0based=TRUE) 
+
+TFs.dbs[["NOTCH1.CUTLL1"]] <- makeGRangesFromDataFrame(df = NOTCH1.CUTLL1,
+                                                    keep.extra.columns=TRUE,
+                                                    seqnames.field="seqnames",
+                                                    start.field="start",
+                                                    end.field="end",
+                                                    strand.field = "strand",
+                                                    starts.in.df.are.0based=TRUE) 
+
+# Create the BED file required for the permutation overlap analysis
+
+for(i in 1:(length(TFs.dbs)-2))
+{
+  data <- as.data.frame(TFs.dbs[[i]])
+  
+  # Create bed file and store it
+  write.table(x = data, file = paste("ChIP_overlapping_enrichment/Sanda_tabS2_",names(TFs.dbs)[i],".bed", sep=""),
+              sep = "\t", row.names = FALSE, col.names = FALSE, quote=FALSE)
+}
+
+
+################################################################################
+## 6. Identify the observed overlap between bcat and the rest of TFs
+################################################################################
+
+# Construct the DF of results
+summary <- data.frame("TF.db" = names(TFs.dbs),
+                      "Regions.in.TF" = unlist(lapply(TFs.dbs, function(TF) length(TF))),
+                      "Bcat.regions.ovlp" = NA,
+                      "TF.regions.ovlp" = NA,
+                      "Bcat.regions.Promoter" = NA,
+                      "TF.regions.Group1" = NA)
+
+# Check the overlap. Query: bcat, Target: TFs of interest
+obs.ovlp <- lapply(TFs.dbs, function(TF) 
+  as.data.frame(findOverlaps(chips.genes.gr, TF,
+                             maxgap=-1L)))
+
+# Populate the df with the results
+summary$Bcat.regions.ovlp <- unlist(lapply(obs.ovlp, function(ovlp) length(unique(ovlp$queryHits))))
+summary$TF.regions.ovlp <- unlist(lapply(obs.ovlp, function(ovlp) length(unique(ovlp$subjectHits))))
+
+################################################################################
+## 7. (OPTIONAL) Assess the overlapped regions in our bcat results: which are in Promoter <=1kb
+################################################################################
+
+bcat.ovlp <- lapply(obs.ovlp, function(ovlp) unique(ovlp$queryHits))
+bcat.ovlp.annot <- lapply(bcat.ovlp, function(ol) as.data.frame(chips.genes.gr[ol])$annotation)
+
+
+bcat.ovlp.annot <- lapply(bcat.ovlp.annot, function(an) {
+  an[grep("Intron",an)] <- "Intron"
+  return(an)
+})
+
+# Add this info to the table
+summary$Bcat.regions.Promoter <- unlist(lapply(bcat.ovlp.annot, function(an){
+  stats <- table(an)
+  return(stats["Promoter (<=1kb)"])
+  }))
+
+################################################################################
+## 8. (OPTIONAL) Assess the overlapped regions in TFs results: which are from Group1
+################################################################################
+ 
+TFs.ovlp <- lapply(obs.ovlp, function(ovlp) unique(ovlp$subjectHits))
+
+TFs.ovlp.annot <- lapply(seq(1,length(TFs.ovlp)-2), function(ol)
+  table(as.data.frame(TFs.dbs[[ol]][TFs.ovlp[[ol]],])$Group))
+
+unlist(lapply(TFs.ovlp.annot, function(a) a["1"]))
+
+# Add this info to the table
+summary$TF.regions.Group1 <- c(unlist(lapply(TFs.ovlp.annot, function(a) a["1"])), NA,NA)
+
+
+################################################################################
+## 9. Statistical assesment of the overlapping
+################################################################################
+
+# This is to be done per TF
+bed.files <- list.files(path="ChIP_overlapping_enrichment",full.names = TRUE)
+random.overlaps <- vector("list",length=length(bed.files))
+
+# Permutations
+nperm <- 1000
+
+for(j in 1:length(random.overlaps))
+{
+  bcat.regions.overlap.random <- vector(length=nperm)
+  
+  for(i in 1:nperm)  # For each permutation
+  {
+    # Create a new TF peaks dataset: new bed file
+    system(command=paste("/Users/mmaqueda/Documents/Software/bedtools2/bin/bedtools shuffle -i ",
+                         bed.files[j],
+                         " -g /Users/mmaqueda/Documents/Projects/Violeta_García/Bcat_TALL/PAPER/EMBOMM_July22/hg38_chrom.size", 
+                         " -incl /Users/mmaqueda/Documents/Projects/Violeta_García/Bcat_TALL/PAPER/EMBOMM_July22/merge_oregano_hg38.bed ",
+                         "-noOverlapping ", "-seed ",i,
+                         " > /Users/mmaqueda/Documents/Projects/Violeta_García/Bcat_TALL/PAPER/EMBOMM_July22/random.peaks.bed",
+                         sep=""))
+    
+    # Import bed file 
+    random.bed <- read.table(file="/Users/mmaqueda/Documents/Projects/Violeta_García/Bcat_TALL/PAPER/EMBOMM_July22/random.peaks.bed",
+                             header=FALSE, sep="\t")
+    
+    # Create a GRanges object
+    random.bed.gr <- makeGRangesFromDataFrame(df = random.bed,
+                                              keep.extra.columns=TRUE,
+                                              seqnames.field="V1",
+                                              start.field="V2",
+                                              end.field="V3",
+                                              ignore.strand = TRUE,
+                                              starts.in.df.are.0based=TRUE) 
+    
+    # Find Overlap
+    random.overlapping <-as.data.frame(findOverlaps(chips.genes.gr, random.bed.gr,
+                                                    maxgap=-1L))
+    # Store overlap
+    bcat.regions.overlap.random[i] <- length(unique(random.overlapping$queryHits))
+  }
+  
+  random.overlaps[[j]] <- bcat.regions.overlap.random
+}
+
+# Add TF names to results 
+bed.files.names <- list.files(path="ChIP_overlapping_enrichment",full.names = FALSE,pattern = ".bed")
+bed.files.names <- unlist(sapply(bed.files.names, function(name) unlist(strsplit(name, split="_"))[3]))
+bed.files.names <- gsub(pattern = ".bed", replacement = "",x = bed.files.names,fixed = TRUE)
+bed.files.names[1:2] <- c("NOTCH1.CUTLL1", "NOTCH1.HPB")
+
+names(random.overlaps) <- bed.files.names
+
+# Order them as in the summary table to compute probability
+match(summary$TF.db, names(random.overlaps))
+
+random.overlaps.sorted <- random.overlaps[match(summary$TF.db, names(random.overlaps))]
+
+# Assign a probability to that overlapping: random.overlaps
+# Probability to be computed as in ChIPseeker: 
+# Random ChIP data is generated to estimate the background null distribution of the overlap
+# P-value is calculated by the probability of observing more extreme overlap
+
+  # Let's add the mean overlap in the Null distribution
+summary$Mean.Ovlp.NullDist <- unlist(lapply(random.overlaps.sorted, function(ro) round(mean(ro),digits=1)))
+
+summary$p.ovlp <- round(unlist(lapply(seq(1,nrow(summary)), function(pp) 
+  ((sum(random.overlaps.sorted[[pp]] > summary$Bcat.regions.ovlp[pp])+1) /(nperm+1)))), digits=5)
+
+summary$p.adjust <- round(sapply(p.ovlp, function(p) p.adjust(p=p,method="BH", n=nrow(summary))), digits=5)
+
+write.xlsx(x = summary, file = "Summary_Overlapping_bcat_TFs_varia.xlsx")
