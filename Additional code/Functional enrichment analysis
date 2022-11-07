@@ -1,0 +1,106 @@
+################################################################################
+##        Title : TALL - Bcatenin activity program - EMBOMM manuscrip review
+##  Description : This script is for repeating the functional analysis with EnrichR
+##         Date : 16th Sept 2022
+################################################################################
+
+# Set up paths ------------------------------------------------------------
+
+################################################################################
+## 1. Set up paths
+################################################################################
+
+.wd <- getwd()
+
+# Load packages -----------------------------------------------------------
+
+################################################################################
+## 2. Load packages
+################################################################################
+
+require(openxlsx)
+require(enrichR)
+require(dplyr)
+
+# Import data -------------------------------------------------------------
+
+################################################################################
+## 3. Import different lists to be functionally analyzed
+################################################################################
+
+# a) ChIPseq results: 522 genes associated to peaks (in TSS <1kb). Table S1, 1st sheet
+chip.genes <- read.xlsx(xlsxFile = "../Manuscript/Table_S1.xlsx",
+                        sheet = "522 genes ChIP signature")
+
+# b) RNAseq results: 5000 genes (up + down). Table S2, 1st sheet
+degs.rna <- read.xlsx(xlsxFile = "../Manuscript/Table_S2.xlsx",
+                      sheet = "RNA-seq results",rowNames = TRUE)
+degs.rna <- degs.rna %>%
+  filter(padj < 0.05, !is.na(symbol))
+
+degs.rna.up <- degs.rna %>% filter(log2FoldChange > 0)
+
+# (dim(degs.rna.up))  
+# [1] 2073   10
+
+degs.rna.down <- degs.rna %>% filter(log2FoldChange <0)
+
+# (dim(degs.rna.down))  
+# [1] 2859   10
+
+
+# c1) PATIENTS scenario 1.Figure S3 related. List made based on heatmap genes (paper)
+figS3.genes <- read.xlsx(xlsxFile = "FigS3_Fig3_cluster_genes.xlsx",
+                         sheet = "FigS3_Clusters")
+
+# c2) PATIENTS scenario 2.Figure 3 related.  List made based on heatmap genes (paper)
+fig3.genes <- read.xlsx(xlsxFile = "FigS3_Fig3_cluster_genes.xlsx",
+                         sheet = "Fig3_Clusters")
+
+# c3) PATIENTS scenario 3.Figure S4 related. From Table S3
+figS4.genes <- read.xlsx(xlsxFile = "../Manuscript/Table_S3.xlsx",
+                        sheet = "bcat_targets_DEGs_if_rem_p0.05")
+
+################################################################################
+## 4. Pre- functional analysis. Genes of interest and EnrichR set up
+################################################################################
+
+# Set which EnrichrSite to be use (different site depending on the organism)
+setEnrichrSite("Enrichr") # Human genes
+
+# Check available database 
+dbs <- listEnrichrDbs()
+View(dbs[grep("GO", dbs$libraryName),])  
+  # To consider "GO_Biological_Process_2018" or "GO_Biological_Process_2021"
+
+# Define the database of interest among the previous list (dbs)
+db.interest <- "GO_Biological_Process_2021"
+
+# Create a list with each element being a list of genes to be analyzed
+genes.of.interest <- list("CHIP" = chip.genes$Symbol, 
+                          "RNA.DOWN" = degs.rna.down$symbol,
+                          "RNA.UP" = degs.rna.up$symbol,
+                          "BCAT.SIGN.DOWN" = bcat.sign$symbol[bcat.sign$Status == "DOWN"],
+                          "BCAT.SIGN.UP" = bcat.sign$symbol[bcat.sign$Status == "UP"],
+                          "FigS3_ClusterGA" = figS3.genes$Symbol[figS3.genes$Cluster == "GA"],
+                          "FigS3_ClusterGB" = figS3.genes$Symbol[figS3.genes$Cluster == "GB"],
+                          "FigS3_ClusterGC" = figS3.genes$Symbol[figS3.genes$Cluster == "GC"],
+                          "Fig3_ClusterG1" = fig3.genes$Symbol[fig3.genes$Cluster == "G1"],
+                          "Fig3_ClusterG2" = fig3.genes$Symbol[fig3.genes$Cluster == "G2"],
+                          "Fig3_ClusterG3" = fig3.genes$Symbol[fig3.genes$Cluster == "G3"],
+                          "FigS4_UP" = figS4.genes$hgnc_symbol[figS4.genes$reg == "up"],
+                          "FigS4_DOWN" = figS4.genes$hgnc_symbol[figS4.genes$reg == "down"])
+
+################################################################################
+## 5. Conduct functional analysis and re-organize results
+################################################################################
+
+enrich.results <- lapply(genes.of.interest, function(genes) 
+  enrichr(genes = genes, databases = db.interest))
+
+# Re-organize results to un-nest lists
+enrich.results <- lapply(enrich.results, function(res) res[[1]])
+
+# Remove unused columns: Old.P.value and Old.Adjusted.P.value
+enrich.results <- lapply(enrich.results, function(res) 
+  res[,-which(colnames(res) %in% c("Old.P.value", "Old.Adjusted.P.value")),])
