@@ -81,7 +81,7 @@ ggplot(metadata_ssbcat_micro_surv,aes(x=cluster1,y=cluster2))+
 
 
 ################################################################################
-## 5. Fig EV4d: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4a) from discovery cohort
+## 5. Fig EV4e: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4a) from discovery cohort
 ################################################################################
 # Divide dataframe based on quartiles from Fig 4a ####
 clust1_clas<-rbind(data.frame(cluster1_lev="Q4",metadata_ssbcat_micro_surv[metadata_ssbcat_micro_surv$cluster1>Q4value,]),
@@ -207,7 +207,7 @@ ggplot(metadata_ssbcat_micro,aes(x=cluster1,y=cluster2))+
   stat_cor(method="pearson")
 
 ################################################################################
-## 7. Fig EV4c (left): b-catenin expression levels per outcome or cluster from Fig 4b
+## 7. Fig EV4d (left): b-catenin expression levels per outcome or cluster from Fig 4b
 ################################################################################
 
 # Divide dataframe based on quartiles from Fig 4b ####
@@ -315,7 +315,7 @@ ggplot(metadata_ssbcat[metadata_ssbcat$GSEA %in% cohorts , ],aes(x=cluster1,y=cl
 
 
 ################################################################################
-## 9. Fig EV4c (EGA, middle; TARGET, right) : b-catenin expression levels per outcome or cluster from Fig 4b
+## 9. Fig EV4d (EGA, middle; TARGET, right) : b-catenin expression levels per outcome or cluster from Fig 4b
 ################################################################################
 
 # Divide dataframe based on quartiles from Fig 4b ####
@@ -361,7 +361,7 @@ ggplot(clust1_clas[clust1_clas$GSEA %in% cohorts, ],aes(x=First_event,y=bcat_exp
   coord_fixed(ratio=0.025)
 
 ################################################################################
-## 10. Fig EV4e: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4d) from TARGET cohort 
+## 10. Fig EV4f: Survival (Kaplan-Meier) curves for Q4 vs not Q4 (obtained in Fig 4d) from TARGET cohort 
 ################################################################################
 
 # Divide dataframe based on quartiles from Fig 4b ####
