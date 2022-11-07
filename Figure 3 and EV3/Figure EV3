@@ -1,0 +1,365 @@
+################################################################################
+##        Title : Exploration of b-Catenin gene signature expression  T-ALL human samples extracted from public databases. 
+##  Description : This script is to obtain Figure EV3 in Garcia-Hernandez V manuscript
+##         Date : 07th October 2022
+################################################################################
+
+################################################################################
+## 1. Set up paths
+################################################################################
+
+.wd <- getwd()
+
+################################################################################
+## 2. Load packages
+################################################################################
+
+library(readxl)
+library(ggrepel)
+library(data.table)
+library(RColorBrewer)
+library(pheatmap)
+library(survival)
+library(survminer)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+################################################################################
+## 3. Files and objects needed
+################################################################################
+
+## expannot_GSE14618_2      #Expression matrix from GSE14618 (COG9404). Generated with 'Cohorts_expression_matrix.R' script.
+## bcat_gene_signature.xlsx  #156 b-catenin targets from intersect ChIP-Seq and DEG RNA-Seq
+## survival_GSE14618        #Clinical data for 40 out of the 50 patients included in GSE14618 (COG9404 study). Provided by Alejandro Gutierrez.
+
+
+################################################################################
+## 4. Fig EV3A: 156 B-CAT targets from intersect ChIP-Seq and DEG RNA-Seq in Discovery cohort
+################################################################################
+
+## Define geneset for exploration ####
+genesignature<-read_xlsx("bcat_gene_signature.xlsx", col_names = F)
+bcat_pattern <-genesignature$...1
+bcat_sig<-filter(expannot_GSE14618_2, grepl(paste0('^',bcat_pattern,'\\>','$',collapse = '|'),symbol)) ## process microarrays probes symbols 
+
+
+bcat_sig$Row.names<-NULL
+bcat_sig$probe_id<-NULL
+
+# Select unique probeid per gene
+bcat_sig<-bcat_sig[order(bcat_sig$GSM365113,decreasing = TRUE),]
+bcat_sig<-bcat_sig[!duplicated(bcat_sig$symbol),]
+
+row.names(bcat_sig)<-bcat_sig$symbol
+bcat_sig$symbol<-NULL
+
+# Expression levels of TFs of interest
+ctnnb1_exp2<-grepl('CTNNB1',expannot_GSE14618_2$symbol)
+kaiso_exp2<-grepl('ZBTB33',expannot_GSE14618_2$symbol)
+brca1_exp2<-grepl('BRCA1',expannot_GSE14618_2$symbol)
+tcf_exp2<-grepl('TCF7',expannot_GSE14618_2$symbol)
+lef_exp2<-grepl('LEF1',expannot_GSE14618_2$symbol)
+
+df1<-expannot_GSE14618_2[ctnnb1_exp2,]
+df2<-expannot_GSE14618_2[kaiso_exp2,]
+df3<-expannot_GSE14618_2[brca1_exp2,]
+df4<-expannot_GSE14618_2[tcf_exp2,][c(1:2),]
+df5<-expannot_GSE14618_2[lef_exp2,][c(1:3),]
+
+df<-as.data.frame(t(Reduce(function(x, y) merge(x, y, all=TRUE), list(df1, df2, df3, df4, df5))))
+df<-df[-c(1:2),]
+colnames(df)<-df[1,]
+df<-df[-1,]
+colnames(df)<-c("bcat_exp_prob1","bcat_exp_prob2","brca1_exp_prob1",
+                  "tcf_exp_prob1","tcf_exp_prob2","lef_exp_prob1",
+                  "brca1_exp_prob2","kaiso_exp_prob1",
+                  "lef_exp_prob2","lef_exp_prob3","bcat_exp_prob3","kaiso_exp_prob2")
+
+## Add pheno data survival provided by Alejandro Gutierrez ####
+survival_GSE14618<-data.frame(read_excel("survival_GSE14618_file_provided_by_AlejandroGutierrez.xlsx"))
+survival_GSE14618<-survival_GSE14618[survival_GSE14618$GEO_Array_ID!="ND",]
+row.names(survival_GSE14618)<-survival_GSE14618$GEO_Array_ID
+
+## Generate heatmap ####
+# heatmap only with patients with survival data
+t_bcat_sig<-t(bcat_sig)
+t_bcat_sig<-t_bcat_sig[row.names(t_bcat_sig) %in% row.names(survival_GSE14618), ]
+
+pheno<-pheno_GSE14618_gpl570[row.names(pheno_GSE14618_gpl570) %in% row.names(t_bcat_sig), ]
+df_surv<-df[row.names(df) %in% row.names(t_bcat_sig), ]
+
+pheno<-merge(pheno,df_surv,by="row.names")
+row.names(pheno)<-pheno$Row.names
+pheno$Row.names<-NULL
+pheno<-merge(pheno,survival_GSE14618,by="row.names")
+row.names(pheno)<-pheno$Row.names
+pheno$Row.names<-NULL
+
+# 
+pheno$bcat_exp_prob1<-as.numeric(pheno$bcat_exp_prob1)
+pheno$bcat_exp_prob2<-as.numeric(pheno$bcat_exp_prob2)
+pheno$bcat_exp_prob3<-as.numeric(pheno$bcat_exp_prob3)
+pheno$brca1_exp_prob1<-as.numeric(pheno$brca1_exp_prob1)
+pheno$brca1_exp_prob2<-as.numeric(pheno$brca1_exp_prob2)
+pheno$kaiso_exp_prob1<-as.numeric(pheno$kaiso_exp_prob1)
+pheno$kaiso_exp_prob2<-as.numeric(pheno$kaiso_exp_prob2)
+pheno$lef_exp_prob1<-as.numeric(pheno$lef_exp_prob1)
+pheno$lef_exp_prob2<-as.numeric(pheno$lef_exp_prob2)
+pheno$lef_exp_prob3<-as.numeric(pheno$lef_exp_prob3)
+pheno$tcf_exp_prob1<-as.numeric(pheno$tcf_exp_prob1)
+pheno$tcf_exp_prob2<-as.numeric(pheno$tcf_exp_prob2)
+
+pheno$Pheno<-gsub(', non-ABD','',pheno$T.ALL_Subset)
+pheno$Pheno<-gsub(';.*','',pheno$Pheno)
+
+# Invert values for Alive variable in pheno dataframe (original 0 = dead; final 1 = dead)
+pheno$Alive<-as.integer(pheno$Alive)
+pheno$Alive_status<-gsub('1','zero',pheno$Alive)
+pheno$Alive_status<-gsub('0','one',pheno$Alive_status)
+
+pheno$Alive_status<-gsub('zero',0,pheno$Alive_status)
+pheno$Alive_status<-gsub('one',1,pheno$Alive_status)
+
+pheno$Alive_status<-as.integer(pheno$Alive_status)
+
+
+## generate heatmap with pheatmap
+myBreaks <- c(seq(min(scale(t_bcat_sig_2)), 0, length.out=round(ceiling(paletteLength*0.45))),
+              seq(0.1,2.5,length.out = round(ceiling(paletteLength*0.45))),
+              seq(2.6, max(scale(t_bcat_sig_2)), length.out=round(floor(paletteLength*0.10))))
+
+phet<-pheatmap(as.data.frame(t(scale(t_bcat_sig_2))),
+               annotation_col = pheno[,c(53,64,61,63)],
+               #  annotation_row = colcol[,c(6,11,12,13,14)],
+               show_colnames=F,
+               show_rownames = T,
+               fontsize = 4,
+               cutree_cols = 3,
+               cutree_rows = 3,
+               color=cols,
+               breaks=myBreaks)
+
+
+
+
+################################################################################
+## 5. Preparation of patient and gene clusters objects for further interrogation
+################################################################################
+  
+# Identify and store patient and gene clusters info ####
+clusters<-data.frame(cluster=sort(cutree(phet$tree_row, k=3)))
+patients<-data.frame(cluster=sort(cutree(phet$tree_col, k=3)))
+
+table(patients$cluster)
+table(clusters$cluster)
+clusters$Gene<-row.names(clusters)
+
+# Order genes (object clusters) ####
+geneorder<-data.frame(Gene=rownames(as.data.frame(t(scale(t_bcat_sig)))[phet$tree_row[["order"]],]))
+geneorder$order<-row.names(geneorder)
+row.names(geneorder)<-geneorder$Gene
+
+clusters<-merge(clusters,geneorder,by="Gene")
+clusters$order<-as.numeric(clusters$order)
+
+
+################################################################################
+## 6. Fig EV3c: expression levels of TFs of interest by patients cluster
+################################################################################
+
+# box-plot of scaled expressions per cluster ####
+my_comparison_clusters<-list(c("1","2"), c("1","3"), c("2","3"))
+
+## replace 'factor_exp_prob by 'bcat_exp_prob1', 'tcf_exp_prob1', 'lef_expr_prob1' or 'kaiso_expr_prob2'
+ggplot(patinfo,aes(x=reorder(as.factor(cluster),patinfo$factor_exp_prob, FUN = median),y=scale(factor_exp_prob)))+
+  geom_point(aes(color=Outcome),size=5)+
+  geom_boxplot(alpha=0.2,lwd=1)+
+  theme_bw()+
+  stat_compare_means(method="wilcox.test",comparisons = my_comparison_clusters)+ # Add pairwise comparison p-value
+  stat_compare_means(method="kruskal.test")+ 
+  theme(legend.position = "bottom",
+        legend.text = element_text(size=14),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=14,hjust=1),
+        axis.text.y = element_text(angle=45, size=14,hjust=1))
+
+
+
+
+################################################################################
+## 7. Fig EV3d: expression levels of TFs of interest by outcome 
+################################################################################
+
+# box-plot of scaled expressions per outcome ####
+my_comparison_outcome<-list(c("Induction failure","Relapse"),c("Induction failure","Long-term event-free survivor"),c("Relapse","Long-term event-free survivor"))
+
+## replace 'factor_exp_prob by 'bcat_exp_prob1', 'tcf_exp_prob1', 'lef_expr_prob1' or 'kaiso_expr_prob2'
+ggplot(patinfo,aes(x=Outcome,y=scale(factor_exp_prob)))+
+  geom_point(aes(color=Outcome),size=5)+
+  geom_boxplot(alpha=0.2,lwd=1)+
+  theme_bw()+
+  stat_compare_means(method="wilcox.test",comparisons = my_comparison_outcome)+ # Add pairwise comparison p-value
+  stat_compare_means(method="kruskal.test")+ 
+  theme(legend.position = "bottom",
+        legend.text = element_text(size=14),
+        text = element_text(size=10),
+        axis.text.x = element_text(angle=45, size=14,hjust=1),
+        axis.text.y = element_text(angle=45, size=14,hjust=1))
+
+
+
+
+
+# Order patients (object patients) ####
+patientorder<-data.frame(Sample=colnames(as.data.frame(t(scale(t_bcat_sig)))[,phet$tree_col[["order"]]]))
+patientorder$order<-row.names(patientorder)
+row.names(patientorder)<-patientorder$Sample
+patientorder$Sample<-NULL
+
+patients<-merge(patients,patientorder,by="row.names")
+row.names(patients)<-patients$Row.names
+patients$Row.names<-NULL
+patients$order<-as.numeric(patients$order)
+
+# Merge metadata with patients classification in clusters ####
+patinfo<-merge(pheno, patients,by="row.names")
+## Levels of TFs of interest as numeric
+patinfo$bcat_exp_prob1<-as.numeric(patinfo$bcat_exp_prob1)
+patinfo$bcat_exp_prob2<-as.numeric(patinfo$bcat_exp_prob2)
+patinfo$bcat_exp_prob3<-as.numeric(patinfo$bcat_exp_prob3)
+
+patinfo$brca1_exp_prob1<-as.numeric(patinfo$brca1_exp_prob1)
+patinfo$brca1_exp_prob2<-as.numeric(patinfo$brca1_exp_prob2)
+
+patinfo$kaiso_exp_prob1<-as.numeric(patinfo$kaiso_exp_prob1)
+patinfo$kaiso_exp_prob2<-as.numeric(patinfo$kaiso_exp_prob2)
+
+patinfo$tcf_exp_prob1<-as.numeric(patinfo$tcf_exp_prob1)
+patinfo$tcf_exp_prob2<-as.numeric(patinfo$tcf_exp_prob2)
+
+patinfo$lef_exp_prob1<-as.numeric(patinfo$lef_exp_prob1)
+patinfo$lef_exp_prob2<-as.numeric(patinfo$lef_exp_prob2)
+
+patinfo<-patinfo[,-2]
+
+
+
+
+
+################################################################################
+## 8. Fig EV3b: survival (Kaplan-Meier) curves per patient cluster 
+################################################################################
+# Merge metadata with patients classification in clusters ####
+pheno_pat<-merge(patients,pheno,by="row.names")
+row.names(pheno_pat)<-pheno_pat$Row.names
+pheno_pat$Row.names<-NULL
+
+pheno_pat$Event<-as.integer(pheno_pat$Event)
+pheno_pat$Alive<-as.integer(pheno_pat$Alive)
+
+pheno_pat$Alive_bin<-gsub('1','zero',pheno_pat$Alive)
+pheno_pat$Alive_bin<-gsub('0','one',pheno_pat$Alive_bin)
+
+pheno_pat$Alive_bin<-gsub('zero',0,pheno_pat$Alive_bin)
+pheno_pat$Alive_bin<-gsub('one',1,pheno_pat$Alive_bin)
+
+pheno_pat$Alive_bin<-as.integer(pheno_pat$Alive_bin)
+
+# DFS (disease free survival) ####
+surv_C_fit_TALL <- survfit(Surv(EFS_yrs, Event) ~ cluster, data=pheno_pat)
+ggsurvplot(surv_C_fit_TALL, data = pheno_pat,
+           pval = TRUE,
+           size=2,
+           palette = c("deeppink2","gray87","gray60","gray73","black"),
+           ggtheme = theme_bw()+theme(legend.position = "bottom",
+                                      legend.text = element_text(size=14),
+                                      text = element_text(size=20),
+                                      axis.text.x = element_text(angle=45, size=20,hjust=1),
+                                      axis.text.y = element_text(size=20,hjust=1)),
+           font.x = c(20),
+           font.y = c(20))
+
+# OS (overall survival) ####
+surv_C_fit_TALL <- survfit(Surv(Surv_yrs, Alive_bin) ~ cluster, data=pheno_pat)
+ggsurvplot(surv_C_fit_TALL, data = pheno_pat,
+           pval = TRUE,
+           size=2,
+           palette = c("deeppink2", "gray87","gray60","gray73","black"),
+           ggtheme = theme_bw()+theme(legend.position = "bottom",
+                                      legend.text = element_text(size=14),
+                                      text = element_text(size=20),
+                                      axis.text.x = element_text(angle=45, size=20,hjust=1),
+                                      axis.text.y = element_text(size=20,hjust=1)),
+           font.x = c(20),
+           font.y = c(20))
+
+
+
+
+
+
+################################################################################
+## 9. Fig EV3e-EV3g: DFS curves for patients based solely on TFS levels
+################################################################################
+
+# Create variable bcat expression: high vs low ####
+pheno$bcat_prob1<-ifelse(pheno$bcat_exp_prob1>median(pheno$bcat_exp_prob1),
+                           "high_bcat",
+                           "low_bcat")
+
+# Create variable TCF1 expression: high vs low ####
+pheno$tcf_prob1<-ifelse(pheno$tcf_exp_prob1>median(pheno$tcf_exp_prob1),
+                          "high_tcf",
+                          "low_tcf")
+
+# Create variable LEF1 expression: high vs low ####
+pheno$lef_prob1<-ifelse(pheno$lef_exp_prob1>median(pheno$lef_exp_prob1),
+                          "high_lef",
+                          "low_lef")
+
+# Create variable Kaiso expression: high vs low ####
+pheno$kaiso_prob2<-ifelse(pheno$kaiso_exp_prob2>median(pheno$kaiso_exp_prob2),
+                            "high_kaiso",
+                            "low_kaiso")
+
+# Create variable bcat expression: highest vs lowest vs medium ####
+pheno$bcat_extr_l<-ifelse(pheno$bcat_exp_prob1<quantile(pheno$bcat_exp_prob1)[2],
+                            "extr_low_bcat",
+                            "no_extr_low_bcat")
+
+pheno$bcat_extr_h<-ifelse(pheno$bcat_exp_prob1>quantile(pheno$bcat_exp_prob1)[4],
+                            "extr_high_bcat",
+                            "no_extr_high_bcat")
+
+pheno$bcat_extr<-paste(pheno$bcat_extr_l,pheno$bcat_extr_h,sep="_")
+
+
+# DFS (disease free survival) ####
+pheno_pat<-merge(patients,pheno,by="row.names")
+row.names(pheno_pat)<-pheno_pat$Row.names
+pheno_pat$Row.names<-NULL
+
+pheno_pat$Event<-as.integer(pheno_pat$Event)
+pheno_pat$Alive<-as.integer(pheno_pat$Alive)
+
+## replace 'factor_expr_prob' by
+## 'bcat_prob1' for Fig EV3 e left
+## 'bcat_extr' for Fig EV3 e right
+## 'kaiso_prob2' for Fig EV3 f 
+## 'tcf_prob1' for Fig EV3 g
+## 'lef_prob1' for Fig EV3 h
+surv_C_fit_TALL <- survfit(Surv(EFS_yrs, Event) ~ factor_prob, data=pheno_pat)
+ggsurvplot(surv_C_fit_TALL, data = pheno_2_pat,
+           pval = TRUE,
+           size=2,
+           palette = c("red", "gray60","gray87","gray23"),
+           ggtheme = theme_bw()+theme(legend.position = "bottom",
+                                      legend.text = element_text(size=14),
+                                      text = element_text(size=20),
+                                      axis.text.x = element_text(angle=45, size=20,hjust=1),
+                                      axis.text.y = element_text(size=20,hjust=1)),
+           font.x = c(20),
+           font.y = c(20))
+
